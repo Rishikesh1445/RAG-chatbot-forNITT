@@ -4,6 +4,9 @@ import torch
 import pickle
 from transformers import AutoTokenizer, AutoModel
 import numpy as np
+import nltk
+nltk.download("punkt")
+from nltk.tokenize import sent_tokenize
 
 DATA_DIR = "../data/web"      # your crawled text files
 INDEX_PATH = "index.faiss"
@@ -36,6 +39,38 @@ def embed(texts, batch_size=8):
 
     return np.vstack(all_embeddings)
 
+def chunk_text(text, tokenizer, max_tokens=200, overlap=40):
+    sentences = sent_tokenize(text)
+    chunks = []
+
+    current_chunk = []
+    current_tokens = 0
+
+    for sent in sentences:
+        tokens = tokenizer.tokenize(sent)
+
+        # hard truncate single long sentence
+        if len(tokens) > max_tokens:
+            tokens = tokens[:max_tokens]
+            sent = tokenizer.convert_tokens_to_string(tokens)
+
+        sent_token_count = len(tokens)
+
+        if current_tokens + sent_token_count > max_tokens:
+            chunks.append(" ".join(current_chunk))
+
+            # overlap by sentences
+            overlap_chunk = current_chunk[-overlap:] if overlap < len(current_chunk) else current_chunk
+            current_chunk = overlap_chunk
+            current_tokens = sum(len(tokenizer.tokenize(s)) for s in current_chunk)
+
+        current_chunk.append(sent)
+        current_tokens += sent_token_count
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
+    return chunks
 
 documents = []
 sources = []
@@ -48,11 +83,11 @@ for file in os.listdir(DATA_DIR):
     with open(path, "r", encoding="utf-8") as f:
         text = f.read().strip()
 
-    if len(text) < 200:
-        continue
-
-    documents.append(text)
-    sources.append(file)
+    for chunk in chunk_text(text, tokenizer):
+        if len(chunk) < 200:
+            continue
+        documents.append(chunk)
+        sources.append(chunk)
 
 print(f"Loaded {len(documents)} documents")
 
